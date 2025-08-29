@@ -1,0 +1,63 @@
+name: Build Flipper FAP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout app repo (ton fork)
+        uses: actions/checkout@v4
+
+      - name: Checkout flipperzero-firmware (avec submodules + LFS)
+        uses: actions/checkout@v4
+        with:
+          repository: flipperdevices/flipperzero-firmware
+          path: firmware
+          ref: release-candidate
+          submodules: recursive
+          lfs: true
+
+      - name: Install build deps (SCons, ninja, rsync)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y scons ninja-build ccache git-lfs rsync
+          git lfs install
+
+      - name: Setup Python for fbt
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python requirements
+        working-directory: firmware
+        run: |
+          pip install --upgrade pip
+          if [ -f site_scons/requirements.txt ]; then
+            pip install -r site_scons/requirements.txt
+          elif [ -f scripts/requirements.txt ]; then
+            pip install -r scripts/requirements.txt
+          else
+            pip install scons pyelftools colorama future protobuf
+          fi
+
+      - name: Inject app into applications_user
+        run: |
+          mkdir -p firmware/applications_user/carjacker
+          rsync -a ./ firmware/applications_user/carjacker/ \
+            --exclude 'firmware/' --exclude '.git/' --exclude '.github/' --exclude '.gitignore'
+
+      - name: Build FAPs
+        working-directory: firmware
+        run: |
+          ./fbt faps
+          mkdir -p ../dist
+          find build -type f -name "*.fap" -exec cp {} ../dist/ \;
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: carjacker-fap
+          path: dist/**/*.fap
